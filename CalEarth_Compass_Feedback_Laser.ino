@@ -23,6 +23,7 @@
 */
 
 const byte trigger_pin = 2;
+const byte laser_pin = 12;
 volatile byte triggered = LOW;
 volatile unsigned long last_trigger_time = micros();
 volatile unsigned long this_trigger_time = micros();
@@ -35,10 +36,22 @@ void setup() {
 
   // initialize digital pin LED_BUILTIN as an output.
   pinMode(LED_BUILTIN, OUTPUT);
-  pinMode(12, OUTPUT);
+  pinMode(laser_pin, OUTPUT);
   pinMode(trigger_pin, INPUT);
   attachInterrupt(digitalPinToInterrupt(trigger_pin), trigger, FALLING);
 }
+
+int count = 100;
+float current_rotation_rate = 0; // Hz
+float calc_rotation_rate = 0; // Hz
+
+const uint16_t interval_count = 4;
+bool quadrants_pass_fail[4] = {true, false, true, false}; // Instead of degrees, we'll test with quadrants. In this scenario, an "interval" is rotation_duration/4
+
+unsigned long sweep_start_time = 0; // The time in micros() when we start our sweep.
+const float sweep_start_delay = 198/360.0; // Degrees between the white dot pulse and true 0* elevation (or, 360*, since we're counting down from the top).
+unsigned long sweep_start_delay_micros = 0; // The start delay translated to micros based on our current rotation rate.
+unsigned long interval_time = 0;
 
 void trigger() {
   triggered = HIGH;
@@ -49,39 +62,37 @@ void trigger() {
     last_rotation_duration = calc_rotation_duration;
   }
   last_trigger_time = this_trigger_time;
+  sweep_start_delay_micros = sweep_start_delay * last_rotation_duration;
+  sweep_start_time = this_trigger_time + sweep_start_delay_micros;
+  interval_time = last_rotation_duration/interval_count;
 }
 
-int count = 100;
-float current_rotation_rate = 0; // Hz
-float calc_rotation_rate = 0; // Hz
+unsigned long current_time = 0;
+unsigned long interval_start_time = 0;
+uint16_t interval = 0; // Start at the highest "degree" and count down (in this case, quadrant).
 
-//bool degrees_pass_fail[365]
-
-// the loop function runs over and over again forever
 void loop() {
-  // If 10 is low, light the laser for 10ms. We've just passed the white dot.
-  if (triggered) {
+  current_time = micros();
+  if (triggered && (current_time>sweep_start_time)) { // This is a bad comparison of timestamps rather than duration, but I can't seem to fix it easily.
+    // We have started the sweep.
     triggered = LOW;
-    current_rotation_rate = 1000000.0 / last_rotation_duration;
-    digitalWrite(12, HIGH);
-    delayMicroseconds(count * 10);
-    digitalWrite(12, LOW);
-
-    //last_rotation_duration;
-    Serial.println(current_rotation_rate);
-
-    // Delay to prevent re-triggering on the same dot strike
-    delay(15);
-    --count;
-    if (count == 0)
-      count = 100;
+    // We're supposed to start our sweep
+    interval = interval_count-1;
+    interval_start_time = current_time;
+    if (quadrants_pass_fail[interval]){
+      digitalWrite(laser_pin, HIGH);
+    } else {
+      digitalWrite(laser_pin, LOW);
+    }
   }
-  /*
-    digitalWrite(LED_BUILTIN, HIGH);   // turn the LED on (HIGH is the voltage level)
-    digitalWrite(12, HIGH);
-    delay(1000);                       // wait for a second
-    digitalWrite(LED_BUILTIN, LOW);    // turn the LED off by making the voltage LOW
-    digitalWrite(12, LOW);
-    delay(1000);                       // wait for a second
-  */
+  if (current_time-interval_start_time >= interval_time) {
+    // we're in the next interval
+    interval_start_time = current_time;
+    interval --;
+    if (quadrants_pass_fail[interval]){
+      digitalWrite(laser_pin, HIGH);
+    } else {
+      digitalWrite(laser_pin, LOW);
+    }
+  }
 }
